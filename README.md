@@ -4,11 +4,11 @@ A high-performance Go implementation of document reranking models with **real ne
 
 ## Features
 
-✅ **14+ GGUF Models**: All models use real llama.cpp inference (no simulations)  
+✅ **21 GGUF Models**: All models use real llama.cpp inference (no simulations)  
 ✅ **True Local Inference**: No API dependencies, runs entirely offline  
 ✅ **Unified API**: Single interface for all reranker implementations  
 ✅ **CLI Interface**: Command-line tool with comprehensive options  
-✅ **Hybrid Architecture**: Reranker with embedding similarity fallback  
+✅ **Embedding-based Reranking**: Cosine similarity between query and document embeddings  
 ✅ **High Performance**: Optimized caching and Metal acceleration on macOS  
 ✅ **Production Ready**: Robust error handling and graceful degradation  
 
@@ -32,21 +32,12 @@ A high-performance Go implementation of document reranking models with **real ne
 
 ## Architecture
 
-**All models use a hybrid approach for maximum reliability:**
+**All models use embedding-based cosine similarity for reranking:**
 
-1. **Primary**: `llama-embedding --pooling rank` for true reranking
-2. **Fallback**: Embedding similarity when reranker fails
-3. **Format**: Uses `query</s><s>document` input format per llama.cpp PR #9510
-4. **Caching**: In-memory score cache for performance
-5. **Error handling**: Graceful degradation with meaningful fallbacks
-
-**Key Features:**
-- ✅ **Real Neural Networks** - All models use actual llama.cpp inference
-- ✅ **No Simulations** - Replaced all heuristic word-matching algorithms
-- ✅ **True Local Inference** - No API dependencies, runs entirely offline
-- ✅ **Ollama-Compatible** - Uses llama.cpp + GGUF architecture
-- ✅ **Metal Acceleration** - GPU acceleration on macOS
-- ✅ **Production Ready** - Robust error handling and graceful degradation
+1. **Primary**: Compute separate embeddings for query and document using `llama-embedding`
+2. **Scoring**: Calculate cosine similarity between query and document embeddings
+3. **Caching**: In-memory score cache for performance
+4. **Error handling**: Graceful degradation with meaningful fallbacks
 
 ## Installation
 
@@ -79,7 +70,11 @@ go build -o go-rerankers main.go
 ./go-rerankers --list-models
 
 # Test with a JSON file
-./go-rerankers --test-file tests/data/test_ml.json --top-k 3
+./go-rerankers --test-file test_data/test_ml.json --top-k 3
+
+# Test all JSON files in test_data directory
+./go-rerankers --test-all --reranker mxbai-v2 --top-k 3
+./go-rerankers --test-all --top-k 2  # Test all files with all models
 
 # Test with direct query and documents (all models use real inference)
 ./go-rerankers --query "What is AI?" \
@@ -92,8 +87,9 @@ go build -o go-rerankers main.go
   --reranker qwen-0.6b --top-k 2
 
 # Run benchmarks
-./go-rerankers --benchmark --test-file tests/data/test_berlin.json --reranker mxbai-v2
-./go-rerankers --benchmark --test-file tests/data/test_berlin.json  # All models
+./go-rerankers --benchmark --test-file test_data/test_qa.json --reranker mxbai-v2
+./go-rerankers --benchmark --test-file test_data/test_qa.json  # All models
+./go-rerankers --test-all --benchmark --reranker qwen-0.6b  # Benchmark all test files
 ```
 
 ### Programmatic Usage
@@ -251,8 +247,8 @@ go-rerankers/
 
 ### ✅ Completed Features
 
-- [x] **Real GGUF Inference**: All 14+ models use actual llama.cpp neural networks
-- [x] **Hybrid Architecture**: Reranker with embedding similarity fallback
+- [x] **Real GGUF Inference**: All 21 models use actual llama.cpp neural networks
+- [x] **Embedding-based Reranking**: All models use cosine similarity between embeddings
 - [x] **No Simulations**: Replaced all heuristic word-matching algorithms
 - [x] Core reranker interface and types
 - [x] Factory pattern mapping all models to GGUF local inference
@@ -261,22 +257,6 @@ go-rerankers/
 - [x] Performance benchmarking with actual inference
 - [x] Multiple test datasets
 - [x] Robust error handling and graceful degradation
-
-### 🔄 Future Enhancements
-
-- [ ] Optimize reranker score parsing as llama.cpp reranker support stabilizes
-- [ ] Update to newer GGUF model versions when available
-- [ ] Enhanced Metal/GPU acceleration support
-- [ ] Additional GGUF model support
-
-### 📋 Planned Features
-
-- [ ] Batch processing for large document sets
-- [ ] Streaming support for real-time applications
-- [ ] Model caching and optimization
-- [ ] Docker containerization
-- [ ] gRPC API server
-- [ ] Integration with vector databases
 
 ## CLI Commands Reference
 

@@ -154,42 +154,22 @@ func (r *GGUFLocalReranker) computeRerankerScore(query, document string) (float6
 	return score, nil
 }
 
-// tryRerankerInference attempts to use llama-embedding with --pooling rank for reranking
+// tryRerankerInference attempts to use llama-embedding for reranking by calculating cosine similarity
 func (r *GGUFLocalReranker) tryRerankerInference(query, document string) (float64, error) {
-	// Format input for reranker model using proper format
-	// Based on llama.cpp PR #9510, rerankers expect query</s><s>document format
-	input := fmt.Sprintf("%s</s><s>%s", query, document)
-	
-	// Prepare command using llama-embedding with --pooling rank
-	args := []string{
-		"-m", r.modelPath,
-		"-p", input,
-		"--pooling", "rank", // Use rank pooling for reranker models
-		"--embd-normalize", "-1", // Disable normalization for reranker scores
-		"--verbose-prompt", // Enable verbose output for debugging
+	// Get embeddings for query and document separately
+	queryEmbedding, err := r.getEmbedding(query)
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to get query embedding: %v", err)
 	}
 	
-	// Determine number of threads
-	if r.config.Options != nil {
-		if threads, ok := r.config.Options["threads"].(int); ok && threads > 0 {
-			args = append(args, "-t", fmt.Sprintf("%d", threads))
-		}
+	docEmbedding, err := r.getEmbedding(document)
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to get document embedding: %v", err)
 	}
 	
-	cmd := exec.Command(r.inferenceBinary, args...)
-	
-	// Capture output
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	
-	// Run command
-	if err := cmd.Run(); err != nil {
-		return 0.0, fmt.Errorf("reranker command failed: %v", err)
-	}
-	
-	// Parse the reranker score from output
-	return r.parseRerankerScore(strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()))
+	// Calculate cosine similarity between query and document embeddings
+	cosineSim := cosineSimilarity(queryEmbedding, docEmbedding)
+	return cosineSim, nil
 }
 
 // parseRerankerScore parses the numerical score from llama-embedding --pooling rank output
@@ -213,11 +193,19 @@ func (r *GGUFLocalReranker) parseRerankerScore(stdout, stderr string) (float64, 
 		}
 	}
 	
-	// If no score found in stderr, try parsing stdout
+	// For --pooling rank, the score is the first element of the embedding vector
 	if stdout != "" {
-		// Try to parse as a direct numerical value
-		if score, err := strconv.ParseFloat(strings.TrimSpace(stdout), 64); err == nil {
-			return score, nil
+		// Parse JSON output to extract the first element of the embedding
+		var response EmbeddingResponse
+		if err := json.Unmarshal([]byte(stdout), &response); err == nil {
+			if len(response.Data) > 0 && len(response.Data[0].Embedding) > 0 {
+				// The first element is the reranker score
+				score := response.Data[0].Embedding[0]
+				// Check if the score is valid (not NaN or Inf)
+				if !math.IsNaN(score) && !math.IsInf(score, 0) {
+					return score, nil
+				}
+			}
 		}
 	}
 	
