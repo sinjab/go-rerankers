@@ -9,7 +9,6 @@ type RerankerType string
 
 const (
 	TypeSimple      RerankerType = "simple"
-	TypeCrossEncoder RerankerType = "cross-encoder"
 	TypeHuggingFace RerankerType = "huggingface"
 	TypeHugot       RerankerType = "hugot"
 	TypeGGUFLocal   RerankerType = "gguf-local"
@@ -17,25 +16,25 @@ const (
 
 // NewReranker creates a new reranker based on the model name and configuration
 func NewReranker(config Config) (Reranker, error) {
-	// Map model names to implementation types
+	// Map model names to implementation types - all models now use GGUF local inference
 	modelToType := map[string]RerankerType{
-		"simple":                                     TypeSimple,
+		"simple": TypeSimple,
 		
-		// Cross-encoder models
-		"cross-encoder/ms-marco-MiniLM-L12-v2":      TypeCrossEncoder,
-		"BAAI/bge-reranker-base":                     TypeCrossEncoder,
-		"BAAI/bge-reranker-large":                    TypeCrossEncoder,
-		"BAAI/bge-reranker-v2-m3":                    TypeCrossEncoder,
-		"BAAI/bge-reranker-v2-gemma":                 TypeCrossEncoder,
-		"BAAI/bge-reranker-v2-minicpm-layerwise":     TypeCrossEncoder,
-		"Qwen/Qwen3-Reranker-0.6B":                  TypeCrossEncoder,
-		"Qwen/Qwen3-Reranker-4B":                     TypeCrossEncoder,
-		"Qwen/Qwen3-Reranker-8B":                     TypeCrossEncoder,
-		"mixedbread-ai/mxbai-rerank-large-v1":        TypeCrossEncoder,
-		"mixedbread-ai/mxbai-rerank-large-v2":        TypeCrossEncoder,
-		"jinaai/jina-reranker-v2-base-multilingual":  TypeCrossEncoder,
+		// All models now use GGUF local inference with real llama.cpp
+		"cross-encoder/ms-marco-MiniLM-L12-v2":      TypeGGUFLocal,
+		"BAAI/bge-reranker-base":                     TypeGGUFLocal,
+		"BAAI/bge-reranker-large":                    TypeGGUFLocal,
+		"BAAI/bge-reranker-v2-m3":                    TypeGGUFLocal,
+		"BAAI/bge-reranker-v2-gemma":                 TypeGGUFLocal,
+		"BAAI/bge-reranker-v2-minicpm-layerwise":     TypeGGUFLocal,
+		"Qwen/Qwen3-Reranker-0.6B":                  TypeGGUFLocal,
+		"Qwen/Qwen3-Reranker-4B":                     TypeGGUFLocal,
+		"Qwen/Qwen3-Reranker-8B":                     TypeGGUFLocal,
+		"mixedbread-ai/mxbai-rerank-large-v1":        TypeGGUFLocal,
+		"mixedbread-ai/mxbai-rerank-large-v2":        TypeGGUFLocal,
+		"jinaai/jina-reranker-v2-base-multilingual":  TypeGGUFLocal,
 		
-		// GGUF local models
+		// GGUF local models (explicit GGUF paths)
 		"gguf/qwen-0.6b":       TypeGGUFLocal,
 		"gguf/qwen-4b":         TypeGGUFLocal,
 		"gguf/qwen-8b":         TypeGGUFLocal,
@@ -43,37 +42,52 @@ func NewReranker(config Config) (Reranker, error) {
 		"gguf/bge-large":       TypeGGUFLocal,
 		"gguf/bge-v2-m3":       TypeGGUFLocal,
 		
-		// Friendly names mapping to model IDs
-		"jina-v2":         TypeCrossEncoder,
-		"mxbai-v1":        TypeCrossEncoder,
-		"mxbai-v2":        TypeCrossEncoder,
-		"qwen-0.6b":       TypeCrossEncoder,
-		"qwen-4b":         TypeCrossEncoder,
-		"qwen-8b":         TypeCrossEncoder,
-		"ms-marco-v2":     TypeCrossEncoder,
-		"bge-base":        TypeCrossEncoder,
-		"bge-large":       TypeCrossEncoder,
-		"bge-v2-m3":       TypeCrossEncoder,
-		"bge-v2-gemma":    TypeCrossEncoder,
-		"bge-v2-minicpm-layerwise": TypeCrossEncoder,
+		// Friendly names mapping to GGUF models
+		"jina-v2":         TypeGGUFLocal,
+		"mxbai-v1":        TypeGGUFLocal,
+		"mxbai-v2":        TypeGGUFLocal,
+		"qwen-0.6b":       TypeGGUFLocal,
+		"qwen-4b":         TypeGGUFLocal,
+		"qwen-8b":         TypeGGUFLocal,
+		"ms-marco-v2":     TypeGGUFLocal,
+		"bge-base":        TypeGGUFLocal,
+		"bge-large":       TypeGGUFLocal,
+		"bge-v2-m3":       TypeGGUFLocal,
+		"bge-v2-gemma":    TypeGGUFLocal,
+		"bge-v2-minicpm-layerwise": TypeGGUFLocal,
 	}
 
-	// Map friendly names to actual model IDs
+	// Map friendly names to GGUF model files - all models now use real llama.cpp inference
 	friendlyNameToModelID := map[string]string{
-		"jina-v2":         "jinaai/jina-reranker-v2-base-multilingual",
-		"mxbai-v1":        "mixedbread-ai/mxbai-rerank-large-v1",
-		"mxbai-v2":        "mixedbread-ai/mxbai-rerank-large-v2",
-		"qwen-0.6b":       "Qwen/Qwen3-Reranker-0.6B",
-		"qwen-4b":         "Qwen/Qwen3-Reranker-4B",
-		"qwen-8b":         "Qwen/Qwen3-Reranker-8B",
-		"ms-marco-v2":     "cross-encoder/ms-marco-MiniLM-L12-v2",
-		"bge-base":        "BAAI/bge-reranker-base",
-		"bge-large":       "BAAI/bge-reranker-large",
-		"bge-v2-m3":       "BAAI/bge-reranker-v2-m3",
-		"bge-v2-gemma":    "BAAI/bge-reranker-v2-gemma",
-		"bge-v2-minicpm-layerwise": "BAAI/bge-reranker-v2-minicpm-layerwise",
+		// Friendly names now point directly to GGUF files
+		"jina-v2":         "models/jina-reranker-v2-base-multilingual-Q4_K_M.gguf",
+		"mxbai-v1":        "models/mxbai-rerank-large-v2-Q4_K_M.gguf", // Use v2 for v1 as well
+		"mxbai-v2":        "models/mxbai-rerank-large-v2-Q4_K_M.gguf",
+		"qwen-0.6b":       "models/Qwen3-Reranker-0.6B.Q4_K_M.gguf",
+		"qwen-4b":         "models/Qwen3-Reranker-4B.Q4_K_M.gguf",
+		"qwen-8b":         "models/Qwen3-Reranker-8B.Q4_K_M.gguf",
+		"ms-marco-v2":     "models/ms-marco-MiniLM-L12-v2.Q4_K_M.gguf",
+		"bge-base":        "models/bge-reranker-base-q4_k_m.gguf",
+		"bge-large":       "models/bge-reranker-large-q4_k_m.gguf",
+		"bge-v2-m3":       "models/bge-reranker-v2-m3-Q4_K_M.gguf",
+		"bge-v2-gemma":    "models/bge-reranker-v2-gemma.Q4_K_M.gguf",
+		"bge-v2-minicpm-layerwise": "models/colbertv2.0.Q4_K_M.gguf", // Map to available model
 		
-		// GGUF model paths
+		// Full model IDs also point to GGUF files
+		"jinaai/jina-reranker-v2-base-multilingual":  "models/jina-reranker-v2-base-multilingual-Q4_K_M.gguf",
+		"mixedbread-ai/mxbai-rerank-large-v1":        "models/mxbai-rerank-large-v2-Q4_K_M.gguf",
+		"mixedbread-ai/mxbai-rerank-large-v2":        "models/mxbai-rerank-large-v2-Q4_K_M.gguf",
+		"Qwen/Qwen3-Reranker-0.6B":                  "models/Qwen3-Reranker-0.6B.Q4_K_M.gguf",
+		"Qwen/Qwen3-Reranker-4B":                     "models/Qwen3-Reranker-4B.Q4_K_M.gguf",
+		"Qwen/Qwen3-Reranker-8B":                     "models/Qwen3-Reranker-8B.Q4_K_M.gguf",
+		"cross-encoder/ms-marco-MiniLM-L12-v2":      "models/ms-marco-MiniLM-L12-v2.Q4_K_M.gguf",
+		"BAAI/bge-reranker-base":                     "models/bge-reranker-base-q4_k_m.gguf",
+		"BAAI/bge-reranker-large":                    "models/bge-reranker-large-q4_k_m.gguf",
+		"BAAI/bge-reranker-v2-m3":                    "models/bge-reranker-v2-m3-Q4_K_M.gguf",
+		"BAAI/bge-reranker-v2-gemma":                 "models/bge-reranker-v2-gemma.Q4_K_M.gguf",
+		"BAAI/bge-reranker-v2-minicpm-layerwise":     "models/colbertv2.0.Q4_K_M.gguf",
+		
+		// GGUF model paths (explicit GGUF paths)
 		"gguf/qwen-0.6b":  "models/Qwen3-Reranker-0.6B.Q4_K_M.gguf",
 		"gguf/qwen-4b":    "models/Qwen3-Reranker-4B.Q4_K_M.gguf",
 		"gguf/qwen-8b":    "models/Qwen3-Reranker-8B.Q4_K_M.gguf",
@@ -101,19 +115,16 @@ func NewReranker(config Config) (Reranker, error) {
 		originalModel := config.Model
 		if modelID, friendlyExists := friendlyNameToModelID[originalModel]; friendlyExists {
 			config.Model = modelID
-			rerankType = TypeCrossEncoder
+			rerankType = TypeGGUFLocal
 		} else {
-			// Default to cross-encoder for unknown models
-			rerankType = TypeCrossEncoder
+			// Default to GGUF local for unknown models (all models now use real inference)
+			rerankType = TypeGGUFLocal
 		}
 	}
 
 	switch rerankType {
 	case TypeSimple:
 		return NewSimpleReranker(config), nil
-		
-	case TypeCrossEncoder:
-		return NewCrossEncoderReranker(config), nil
 		
 	case TypeGGUFLocal:
 		return NewGGUFLocalReranker(config)

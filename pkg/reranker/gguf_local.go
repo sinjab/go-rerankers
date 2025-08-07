@@ -9,16 +9,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
 
-// GGUFLocalReranker implements reranking using GGUF models with llama.cpp embedding
+// GGUFLocalReranker implements reranking using GGUF models with llama.cpp inference
 type GGUFLocalReranker struct {
 	config          Config
 	modelPath       string
-	embeddingBinary string
-	embeddingCache  map[string][]float64
+	inferenceBinary string
+	scoreCache      map[string]float64
 	cacheMutex      sync.RWMutex
 }
 
@@ -53,9 +54,9 @@ func NewGGUFLocalReranker(config Config) (*GGUFLocalReranker, error) {
 		}
 	}
 	
-	// Find the llama-embedding binary
-	embeddingBinary := filepath.Join(filepath.Dir(modelPath), "..", "llama.cpp", "build", "bin", "llama-embedding")
-	if _, err := os.Stat(embeddingBinary); os.IsNotExist(err) {
+	// Find the llama-embedding binary for reranker inference
+	inferenceBinary := filepath.Join(filepath.Dir(modelPath), "..", "llama.cpp", "build", "bin", "llama-embedding")
+	if _, err := os.Stat(inferenceBinary); os.IsNotExist(err) {
 		// Try alternative paths
 		alternatives := []string{
 			"./llama.cpp/build/bin/llama-embedding",
@@ -67,7 +68,7 @@ func NewGGUFLocalReranker(config Config) (*GGUFLocalReranker, error) {
 		found := false
 		for _, alt := range alternatives {
 			if _, err := exec.LookPath(alt); err == nil {
-				embeddingBinary = alt
+				inferenceBinary = alt
 				found = true
 				break
 			}
@@ -86,8 +87,8 @@ func NewGGUFLocalReranker(config Config) (*GGUFLocalReranker, error) {
 	reranker := &GGUFLocalReranker{
 		config:          config,
 		modelPath:       modelPath,
-		embeddingBinary: embeddingBinary,
-		embeddingCache:  make(map[string][]float64),
+		inferenceBinary: inferenceBinary,
+		scoreCache:      make(map[string]float64),
 	}
 	
 	// Test the model by computing a simple embedding
@@ -98,11 +99,11 @@ func NewGGUFLocalReranker(config Config) (*GGUFLocalReranker, error) {
 	return reranker, nil
 }
 
-// testModel tests if the GGUF model works by computing a simple embedding
+// testModel tests if the GGUF model works by computing a simple inference
 func (r *GGUFLocalReranker) testModel() error {
 	// For now, just check if the binary and model exist
-	if _, err := os.Stat(r.embeddingBinary); os.IsNotExist(err) {
-		return fmt.Errorf("embedding binary not found: %s", r.embeddingBinary)
+	if _, err := os.Stat(r.inferenceBinary); os.IsNotExist(err) {
+		return fmt.Errorf("inference binary not found: %s", r.inferenceBinary)
 	}
 	
 	if _, err := os.Stat(r.modelPath); os.IsNotExist(err) {
@@ -110,27 +111,62 @@ func (r *GGUFLocalReranker) testModel() error {
 	}
 	
 	// Quick test with a simple computation
-	// We'll do a minimal test here since full embedding test might hang
+	// We'll do a minimal test here since full inference test might hang
 	return nil
 }
 
-// computeEmbedding computes embedding for a given text using llama-embedding
-func (r *GGUFLocalReranker) computeEmbedding(text string) ([]float64, error) {
+// computeRerankerScore computes relevance score for a query-document pair using llama-embedding with --pooling rank
+// Falls back to embedding similarity if reranker fails
+func (r *GGUFLocalReranker) computeRerankerScore(query, document string) (float64, error) {
+	// Create cache key
+	cacheKey := fmt.Sprintf("%s|||%s", query, document)
+	
 	// Check cache first
 	r.cacheMutex.RLock()
-	if cached, exists := r.embeddingCache[text]; exists {
+	if cached, exists := r.scoreCache[cacheKey]; exists {
 		r.cacheMutex.RUnlock()
 		return cached, nil
 	}
 	r.cacheMutex.RUnlock()
 	
-	// Prepare command
+	// Try reranker approach first
+	score, err := r.tryRerankerInference(query, document)
+	if err == nil {
+		// Cache the result
+		r.cacheMutex.Lock()
+		r.scoreCache[cacheKey] = score
+		r.cacheMutex.Unlock()
+		return score, nil
+	}
+	
+	// Fallback to embedding similarity
+	fmt.Printf("DEBUG: Reranker failed (%v), falling back to embedding similarity\n", err)
+	score, err = r.computeEmbeddingSimilarity(query, document)
+	if err != nil {
+		return 0.0, err
+	}
+	
+	// Cache the result
+	r.cacheMutex.Lock()
+	r.scoreCache[cacheKey] = score
+	r.cacheMutex.Unlock()
+	
+	return score, nil
+}
+
+// tryRerankerInference attempts to use llama-embedding with --pooling rank for reranking
+func (r *GGUFLocalReranker) tryRerankerInference(query, document string) (float64, error) {
+	// Format input for reranker model using proper format
+	// Based on llama.cpp PR #9510, rerankers expect query</s><s>document format
+	input := fmt.Sprintf("%s</s><s>%s", query, document)
+	
+	// Prepare command using llama-embedding with --pooling rank
 	args := []string{
 		"-m", r.modelPath,
-		"--pooling", "mean",
-		"--embd-output-format", "json",
-		"--log-disable",
-		"-p", text,
+		"-p", input,
+		"--pooling", "rank", // Use rank pooling for reranker models
+		"--embd-normalize", "-1", // Disable normalization for reranker scores
+		"--verbose-prompt", // Enable verbose output for debugging
 	}
 	
 	// Determine number of threads
@@ -140,7 +176,7 @@ func (r *GGUFLocalReranker) computeEmbedding(text string) ([]float64, error) {
 		}
 	}
 	
-	cmd := exec.Command(r.embeddingBinary, args...)
+	cmd := exec.Command(r.inferenceBinary, args...)
 	
 	// Capture output
 	var stdout, stderr strings.Builder
@@ -149,50 +185,109 @@ func (r *GGUFLocalReranker) computeEmbedding(text string) ([]float64, error) {
 	
 	// Run command
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("embedding command failed: %v, stderr: %s, stdout: %s", err, stderr.String(), stdout.String())
+		return 0.0, fmt.Errorf("reranker command failed: %v", err)
 	}
 	
-	// Debug: log the output
-	output := stdout.String()
-	if output == "" {
-		return nil, fmt.Errorf("embedding command returned empty output, stderr: %s", stderr.String())
+	// Parse the reranker score from output
+	return r.parseRerankerScore(strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()))
+}
+
+// parseRerankerScore parses the numerical score from llama-embedding --pooling rank output
+func (r *GGUFLocalReranker) parseRerankerScore(stdout, stderr string) (float64, error) {
+	// Look for "rerank score" pattern in stderr (based on PR #9510 examples)
+	lines := strings.Split(stderr, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "rerank score") {
+			// Extract score from line like "rerank score 0: -6.851"
+			parts := strings.Fields(line)
+			for i, part := range parts {
+				if part == "score" && i+2 < len(parts) {
+					// Skip the index (e.g., "0:") and get the score
+					scoreStr := parts[i+2]
+					if score, err := strconv.ParseFloat(scoreStr, 64); err == nil {
+						return score, nil
+					}
+				}
+			}
+		}
 	}
 	
-	// Parse JSON response
+	// If no score found in stderr, try parsing stdout
+	if stdout != "" {
+		// Try to parse as a direct numerical value
+		if score, err := strconv.ParseFloat(strings.TrimSpace(stdout), 64); err == nil {
+			return score, nil
+		}
+	}
+	
+	return 0.0, fmt.Errorf("could not parse reranker score from output")
+}
+
+// computeEmbeddingSimilarity computes similarity using embeddings as fallback
+func (r *GGUFLocalReranker) computeEmbeddingSimilarity(query, document string) (float64, error) {
+	// Get embeddings for query and document
+	queryEmb, err := r.getEmbedding(query)
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to get query embedding: %v", err)
+	}
+	
+	docEmb, err := r.getEmbedding(document)
+	if err != nil {
+		return 0.0, fmt.Errorf("failed to get document embedding: %v", err)
+	}
+	
+	// Compute cosine similarity
+	similarity := cosineSimilarity(queryEmb, docEmb)
+	
+	// Convert similarity to reranker-like score (scale from [-1,1] to [-10,10])
+	return similarity * 10.0, nil
+}
+
+// getEmbedding computes embedding for a text using llama-embedding
+func (r *GGUFLocalReranker) getEmbedding(text string) ([]float64, error) {
+	// Prepare command for embedding extraction
+	args := []string{
+		"-m", r.modelPath,
+		"-p", text,
+		"--embd-output-format", "json",
+		"--embd-normalize", "2", // L2 normalization
+	}
+	
+	// Determine number of threads
+	if r.config.Options != nil {
+		if threads, ok := r.config.Options["threads"].(int); ok && threads > 0 {
+			args = append(args, "-t", fmt.Sprintf("%d", threads))
+		}
+	}
+	
+	cmd := exec.Command(r.inferenceBinary, args...)
+	
+	// Capture output
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
+	// Run command
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("embedding command failed: %v, stderr: %s", err, stderr.String())
+	}
+	
+	// Parse JSON output
 	var response EmbeddingResponse
-	if err := json.Unmarshal([]byte(output), &response); err != nil {
-		return nil, fmt.Errorf("failed to parse embedding response: %v, output: %s", err, output)
+	if err := json.Unmarshal([]byte(stdout.String()), &response); err != nil {
+		return nil, fmt.Errorf("failed to parse embedding response: %v", err)
 	}
 	
 	if len(response.Data) == 0 {
 		return nil, fmt.Errorf("no embedding data returned")
 	}
 	
-	embedding := response.Data[0].Embedding
-	
-	// Check if embedding is all zeros (indicates failure)
-	allZeros := true
-	for _, val := range embedding {
-		if val != 0.0 {
-			allZeros = false
-			break
-		}
-	}
-	
-	if allZeros {
-		return nil, fmt.Errorf("embedding computation returned all zeros")
-	}
-	
-	// Cache the result
-	r.cacheMutex.Lock()
-	r.embeddingCache[text] = embedding
-	r.cacheMutex.Unlock()
-	
-	return embedding, nil
+	return response.Data[0].Embedding, nil
 }
 
 // cosineSimilarity computes cosine similarity between two vectors
-func (r *GGUFLocalReranker) cosineSimilarity(a, b []float64) float64 {
+func cosineSimilarity(a, b []float64) float64 {
 	if len(a) != len(b) {
 		return 0.0
 	}
@@ -249,34 +344,22 @@ func (r *GGUFLocalReranker) Rerank(ctx context.Context, query string, documents 
 	return filtered, nil
 }
 
-// ComputeScore computes scores for query-document pairs using GGUF model
+// ComputeScore computes scores for query-document pairs using GGUF reranker model
 func (r *GGUFLocalReranker) ComputeScore(ctx context.Context, query string, documents []Document) ([]float64, error) {
 	if len(documents) == 0 {
 		return nil, nil
 	}
 	
-	// Compute query embedding
-	queryEmbedding, err := r.computeEmbedding(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute query embedding: %v", err)
-	}
-	
-	// Compute document embeddings and similarity scores
+	// Compute relevance scores for each document
 	scores := make([]float64, len(documents))
 	for i, doc := range documents {
-		docEmbedding, err := r.computeEmbedding(doc.Content)
+		score, err := r.computeRerankerScore(query, doc.Content)
 		if err != nil {
-			// If embedding fails, assign a low score
-			scores[i] = -1.0
+			// If scoring fails, assign a low score
+			scores[i] = -5.0
 			continue
 		}
-		
-		// Compute cosine similarity
-		similarity := r.cosineSimilarity(queryEmbedding, docEmbedding)
-		
-		// Convert similarity to a reranker-style score
-		// Cosine similarity is in [-1, 1], we'll map it to a wider range
-		scores[i] = similarity * 10.0
+		scores[i] = score
 	}
 	
 	return scores, nil
@@ -342,6 +425,6 @@ func (r *GGUFLocalReranker) Configure(config Config) error {
 // Close cleans up resources (clears cache)
 func (r *GGUFLocalReranker) Close() {
 	r.cacheMutex.Lock()
-	r.embeddingCache = make(map[string][]float64)
+	r.scoreCache = make(map[string]float64)
 	r.cacheMutex.Unlock()
 }
