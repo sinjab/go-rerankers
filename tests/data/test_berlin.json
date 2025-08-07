@@ -1,0 +1,16 @@
+{
+  "query": "How many people live in Berlin?",
+  "documents": [
+    "Berlin had a population of 3,520,031 registered inhabitants in an area of 891.82 square kilometers.",
+    "Berlin is well known for its museums and cultural attractions.",
+    "New York City is famous for the Metropolitan Museum of Art and has over 8 million residents.",
+    "The capital of Germany is Berlin, which has a rich history dating back to the 13th century.",
+    "Berlin's population density is approximately 3,947 people per square kilometer.",
+    "Tourists visiting Berlin often enjoy the city's vibrant nightlife and cultural scene.",
+    "Germany has a total population of over 83 million people across its 16 federal states.",
+    "Berlin Wall fell in 1989, leading to German reunification and significant population changes.",
+    "The metropolitan area of Berlin-Brandenburg has about 6 million inhabitants.",
+    "Housing prices in Berlin have increased significantly due to population growth and demand."
+  ],
+  "instruction": "Find documents that specifically mention Berlin's population numbers."
+}
