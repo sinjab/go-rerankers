@@ -46,3 +46,20 @@ go-rerankers.exe
 *.disabled
 *.old
 results_*.txt
+
+# Rules
+.*/rules/
+
+# Models
+models/
+
+# GGUF Models (large binary files)
+models/*.gguf
+
+# llama.cpp build directory
+llama.cpp/
+
+# Built binaries
+go-rerankers*
+!go-rerankers/
+

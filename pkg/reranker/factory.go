@@ -12,6 +12,7 @@ const (
 	TypeCrossEncoder RerankerType = "cross-encoder"
 	TypeHuggingFace RerankerType = "huggingface"
 	TypeHugot       RerankerType = "hugot"
+	TypeGGUFLocal   RerankerType = "gguf-local"
 )
 
 // NewReranker creates a new reranker based on the model name and configuration
@@ -33,6 +34,14 @@ func NewReranker(config Config) (Reranker, error) {
 		"mixedbread-ai/mxbai-rerank-large-v1":        TypeCrossEncoder,
 		"mixedbread-ai/mxbai-rerank-large-v2":        TypeCrossEncoder,
 		"jinaai/jina-reranker-v2-base-multilingual":  TypeCrossEncoder,
+		
+		// GGUF local models
+		"gguf/qwen-0.6b":       TypeGGUFLocal,
+		"gguf/qwen-4b":         TypeGGUFLocal,
+		"gguf/qwen-8b":         TypeGGUFLocal,
+		"gguf/bge-base":        TypeGGUFLocal,
+		"gguf/bge-large":       TypeGGUFLocal,
+		"gguf/bge-v2-m3":       TypeGGUFLocal,
 		
 		// Friendly names mapping to model IDs
 		"jina-v2":         TypeCrossEncoder,
@@ -63,6 +72,14 @@ func NewReranker(config Config) (Reranker, error) {
 		"bge-v2-m3":       "BAAI/bge-reranker-v2-m3",
 		"bge-v2-gemma":    "BAAI/bge-reranker-v2-gemma",
 		"bge-v2-minicpm-layerwise": "BAAI/bge-reranker-v2-minicpm-layerwise",
+		
+		// GGUF model paths
+		"gguf/qwen-0.6b":  "models/Qwen3-Reranker-0.6B.Q4_K_M.gguf",
+		"gguf/qwen-4b":    "models/Qwen3-Reranker-4B.Q4_K_M.gguf",
+		"gguf/qwen-8b":    "models/Qwen3-Reranker-8B.Q4_K_M.gguf",
+		"gguf/bge-base":   "models/bge-reranker-base-q4_k_m.gguf",
+		"gguf/bge-large":  "models/bge-reranker-large-q4_k_m.gguf",
+		"gguf/bge-v2-m3":  "models/bge-reranker-v2-m3-Q4_K_M.gguf",
 	}
 
 	// If using a friendly name, convert to model ID
@@ -97,6 +114,9 @@ func NewReranker(config Config) (Reranker, error) {
 		
 	case TypeCrossEncoder:
 		return NewCrossEncoderReranker(config), nil
+		
+	case TypeGGUFLocal:
+		return NewGGUFLocalReranker(config)
 		
 	case TypeHuggingFace:
 		// TODO: Re-enable when dependency issues are resolved
